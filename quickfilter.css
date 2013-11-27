@@ -1,0 +1,21 @@
+.quickfilter-name {
+    margin-top: 1em;
+    font-weight: bold;
+}
+
+.quickfilter-value {
+    position: relative;
+    padding-top: 2px;
+    padding-left: 1em;
+    cursor: pointer;
+    transition: opacity 0.4s linear;
+}
+
+.quickfilter-value-nonviable {
+    opacity: 0.33;
+}
+
+.quickfilter-check {
+    position: absolute;
+    left: 0px;
+}

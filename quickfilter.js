@@ -1,319 +1,173 @@
+// Quickfilter is a simple, lean, client-side faceted search UI.
+//
+// Copyright (c) 2013 Austin T. Clements
+//
+// Permission is hereby granted, free of charge, to any person
+// obtaining a copy of this software and associated documentation
+// files (the "Software"), to deal in the Software without
+// restriction, including without limitation the rights to use, copy,
+// modify, merge, publish, distribute, sublicense, and/or sell copies
+// of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be
+// included in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+// EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+// NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+// BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+// ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+// CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 // Quickfilter theory of operation
 //
-// Definitions
-// * property - The name of something that can be filtered by.
-// * object - A thing that can be matched or not matched.  An object
-//   is a map (really a multimap) from properties to values.  It
-//   corresponds to an HTML element.
-// * filter - A set of selected values for a given property.
-// * viable filter - A set of values for a given property that makes
-//   sense to offer as selections.
-// * value set - For a given property and set of objects, the union of
-//   that property's values for those objects.
+// Definitions:
 //
-// In the simple case, an object matches a filter for property P if
-// the value P for that object is in the filter's set of values.  In
-// the general case, we allow a property to have multiple values of an
-// object; here an object matches if there is a non-empty intersection
-// between the property's values and the filter.
+// * object - A thing that can be matched or not matched.  Quickfilter
+//   operates on a collection of objects.  (These are often called
+//   "documents" in the literature.)  In Quickfilter, an object
+//   generally corresponds to an HTML element, but it can be any
+//   JavaScript value.
 //
-// Suppose we have three properties: A, B, and C and the following
-// objects match for each property's filter,
+// * facet - An aspect of an object that can be filtered by.  Facets
+//   are generally orthogonal and have a relatively small, discrete
+//   set of values.  A facet can be viewed as a projection function
+//   from objects to values or sets of values.
 //
-//   A 1 2
-//   B 1   3
-//   C 1 2 3 4
+// * filter - Each facet has a corresponding filter that can be
+//   manipulated by the user, where the filter is a subset of the
+//   possible values for the facet F.  An object O matches a filter if
+//   F(O) has a non-empty intersection with the filter (in the simple
+//   case, F(O) is just a single value).
 //
-// The set of matching objects is the intersection of these, so just
-// object 1.
+// * result set - The set of objects that match the filters of all
+//   facets in the Quickfilter.
 //
-// Computing viable filters is more interesting.  The viable filter
-// for each property comes from the values of objects that match all
-// *other* filters.  That is,
+// * value set - For a given facet and set of objects, the union of
+//   that facet's values for those objects.
 //
-//   A 1   3
-//   B 1 2
-//   C 1
+// * viable values - For a given facet, the value set of the objects
+//   that match all the filters of all *other* facets.  These are the
+//   values are the "useful" to present as additional choices to the
+//   user (adding in a non-viable value will not grow the result set).
 //
-// Or, from a per-object perspective (which is how we actually
-// construct the viable filters): An object that matches all filters
-// contributes viable values to all properties; an object that fails
-// to match one filter contributes viable values to the filter it
-// failed to match; an object that fails to match two or more filters
-// doesn't contribute any viable values.
+// For each facet, the user can select any subset of its value set to
+// filter on.  Suppose we have three facets (and hence three filters):
+// A, B, and C and four objects: 1 -- 4.  Say the user has selected
+// values such that the following objects match each facet's filter,
+//
+//   A: 1 2
+//   B: 1   3
+//   C: 1 2 3 4
+//
+// The set of objects that match the Quickfilter is the intersection
+// of these; that is, just object 1.
+//
+// For each facet, the Quickfilter presents the user with only with
+// its viable values.  The viable values for each facet are the value
+// sets of objects that match the filters for all *other* facets.
+// Continuing the above example, the following objects contribute to
+// the viable values of the three facets:
+//
+//   A: 1   3
+//   B: 1 2
+//   C: 1
+//
+// Alternatively, from a per-object perspective (which is how we
+// actually construct the viable values): An object that matches all
+// filters contributes to the viable values for all facets; an object
+// that match all but one filter contributes to the viable values of
+// the facet that failed to match; an object that fails to match two
+// or more filters doesn't contribute any viable values.
+
+'use strict';
 
 /**
- * Create a filterer.  items is a jQuery collection of HTML elements
- * that should be shown or hidden according to the filter options.
- * filtersDiv is a jQuery reference to the container that the filter
- * UI should be created in.  properties is an array of
- * Quickfilter.Property's to use as filtering properties.
+ * Create a Quickfilter.  objects is an array-like collection of
+ * objects to filter.  filtersDiv is a DOM object or jQuery object for
+ * the container that the filter UI should be created in.  facets is
+ * an array of Quickfilter.Categorical's to use as filtering facets.
+ * Finally, onchange is a function that will be called when the filter
+ * changes.  onchange will be passed two arguments: the objects array,
+ * and an array of the same length of boolean values indicating
+ * whether each object is matched by the current filters.  onchange is
+ * also called once by the constructor to apply the initial filter.
+ *
+ * Typically, objects will be a collection of DOM objects, and
+ * onchange will modify their visibility, but nothing in Quickfilter
+ * requires this.
  *
  * The filter can optionally save its state so that a user navigating
  * back to this page will get the filter state they left with (but
  * reloading will reset the filter state).  For this to work,
  * filtersDiv must contain an invisible text input element with class
- * .filter-state.
+ * .filter-state (this must be in the HTML, not added by JavaScript,
+ * or it will defeat the whole mechanism).
  */
-function Quickfilter(items, filtersDiv, properties) {
-    var qfthis = this;
-    qfthis._filtersDiv = filtersDiv;
+function Quickfilter(objects, filtersDiv, facets, onchange) {
+    this._filtersDiv = filtersDiv = $(filtersDiv);
+
+    this._objects = objects;
+    this._facets = facets;
+    this._onchange = onchange;
 
     // Get saved state, if any.  See _saveState for the format.  Why
     // do we use a lame textbox instead of HTML5 history state?
-    // Unlike HTLM5 state, this is composable.
-    var savedState = null;
-    qfthis._stateBox = $(".filter-state", filtersDiv);
+    // Unlike HTLM5 state, this is composable.  (And we didn't want to
+    // push history entries anyway.)
+    var savedState = {};
+    this._stateBox = $('.filter-state', filtersDiv);
     try {
-        savedState = $.parseJSON(qfthis._stateBox.val());
+        savedState = $.parseJSON(this._stateBox.val());
     } catch (e) { }
 
-    // Gather object property values
-    var objects = [];
-    items.each(function() {
-        var props = {"_elt": this};
-        for (var pi = 0; pi < properties.length; pi++)
-            props[properties[pi].name] = properties[pi].fetch(this);
-        objects.push(props);
-    });
-    qfthis._objects = objects;
-
-    // Generate filter tables
-    var filters = [];
-    for (var pi = 0; pi < properties.length; pi++) {
-        var property = properties[pi];
-        var name = property.name;
-        var filter = {"name": name, "values": []};
-
-        var tableElt = $('<table>').appendTo(filtersDiv);
-        tableElt.append($('<tr>').append($('<th colspan="2">').text(name)));
-
-        // Collect the value set of this filter
-        var vals = this._valueSet(objects, name, true);
-
-        // Create rows
-        for (var i = 0; i < vals.length; i++) {
-            // We wrap all td contents with divs so we can
-            // slideUp/Down them.
-            var checkElt = $('<td><div>&#x2713;</div></td>');
-            var rowElt = $('<tr>').append(checkElt).append(
-                $('<td>').append(
-                    $('<div>').text(vals[i])));
-            // Remove td padding because it messes up hidden divs
-            $("td", rowElt).css("padding", "0px");
-            $("td > div", rowElt).css("padding", "1px");
-            tableElt.append(rowElt);
-            rowElt.css("cursor", "pointer");
-
-            // Get this value's selected state from the saved state or
-            // the initial selections
-            var selected = undefined;
-            try {
-                selected = savedState[name][vals[i]];
-            } catch (e) { }
-            if (typeof(selected) !== "boolean")
-                selected = vals[i] in property.initial;
-
-            // Create value
-            var value = {"value": vals[i],
-                         "selected": selected,
-                         "enabled": true,
-                         "tds": $("td", rowElt),
-                         "divs": $("div", rowElt),
-                         "checkElt": checkElt};
-            filter.values.push(value);
-
-            // Handle clicks on this row
-            (function(value) {
-                rowElt.click(function() {
-                    if (!value.enabled)
-                        return;
-                    // Toggle this value selection
-                    value.selected = !value.selected;
-                    qfthis._refresh();
-                });
-            })(value);
-        }
-
-        filters.push(filter);
-    }
-
-    // Show newly viable values and hide newly non-viable values on
-    // mouseleave from the filter UI.  This keeps the UI stable while
-    // the user is in it, but also cleans it up when possible.
-    filtersDiv.mouseleave(function() {
-        for (var i = 0; i < qfthis._filters.length; i++) {
-            var filter = qfthis._filters[i];
-            for (var j = 0; j < filter.values.length; j++) {
-                var value = filter.values[j];
-                if (value.enabled)
-                    value.divs.slideDown('fast');
-                else
-                    value.divs.slideUp('fast');
-            }
-        }
-    });
-
-    qfthis._filters = filters;
-    qfthis._refresh(true);
+    this._filters = [];
+    for (var i = 0; i < facets.length; i++)
+        this._filters.push(
+            facets[i]._createFilter(this, savedState[facets[i].name]));
+    this._refresh(true);
 }
-
-/**
- * Return the value set of the given property of an array of objects.
- * These properties should be lists.  The returned value set is their
- * union.  If asList, return a sorted list; otherwise, return a set.
- */
-Quickfilter.prototype._valueSet = function(objs, prop, asList) {
-    var valSet = {};
-    for (var oi = 0; oi < objs.length; oi++) {
-        var objVals = objs[oi][prop];
-        for (var vi = 0; vi < objVals.length; vi++)
-            valSet[objVals[vi]] = true;
-    }
-    if (!asList)
-        return valSet;
-
-    var vals = [];
-    for (var val in valSet)
-        vals.push(val);
-    vals.sort();
-    return vals;
-};
-
-/**
- * Return true if the given filter is disabled (that is, none of its
- * values are selected).
- */
-Quickfilter.prototype._filterDisabled = function(filter) {
-    for (var i = 0; i < filter.values.length; i++)
-        if (filter.values[i].selected)
-            return false;
-    return true;
-};
-
-/**
- * Return true if lst and the keys of set have a non-empty intersection.
- */
-Quickfilter.prototype._intersects = function(lst, set) {
-    for (var i = 0; i < lst.length; i++)
-        if (lst[i] in set)
-            return true;
-    return false;
-};
 
 /**
  * Refresh the filter UI and matched objects based on the current
  * filters.
  */
 Quickfilter.prototype._refresh = function(isInit) {
-    // Compute selected filter values for each property.  This is map
-    // from property names to value sets.  We omit disabled filters.
-    var selSets = {};
-    for (var i = 0; i < this._filters.length; i++) {
-        var filter = this._filters[i];
+    // Get predicates for each filter
+    var preds = new Array(this._filters.length);
+    for (var i = 0; i < this._filters.length; i++)
+        preds[i] = this._filters[i].makePredicate();
 
-        if (this._filterDisabled(filter))
-            continue;
-
-        selSets[filter.name] = {};
-        for (var j = 0; j < filter.values.length; j++)
-            if (filter.values[j].selected)
-                selSets[filter.name][filter.values[j].value] = true;
-    }
-
-    // Update check marks
-    for (var i = 0; i < this._filters.length; i++) {
-        var filter = this._filters[i];
-
-        // Color each mark.  If this filter is disabled, show them in
-        // light gray, since it's like they're all selected.
-        var notSelColor = filter.name in selSets ? '#fff' : '#ccc';
-        for (var j = 0; j < filter.values.length; j++) {
-            var row = filter.values[j];
-            row.checkElt.css("color", row.selected ? '#000' : notSelColor);
-        }
-    }
-
-    // Create empty filter generators for all enabled filters.  A
-    // filter generator is the array of objects that match all other
-    // filters.
-    var filterGenerators = {};
-    for (var name in selSets)
-        filterGenerators[name] = [];
-    var matches = [];
-
-    // Filter objects and find the generators for each filter
+    // Apply filters to find matched set and single-miss filters
+    var matched = new Array(this._objects.length);
+    var missed = new Array(this._objects.length);
     for (var i = 0; i < this._objects.length; i++) {
         // Find the filters this object fails to match
-        var object = this._objects[i];
-        var failedFilter = null, failedMultiple = false;
-        for (var name in selSets) {
-            var vals = object[name], sels = selSets[name];
-            if (!this._intersects(vals, sels)) {
-                if (failedFilter === null) {
-                    failedFilter = name;
-                } else {
-                    failedMultiple = true;
-                    break;
-                }
+        var objMissed = null, nmissed = 0;
+        for (var pi = 0; pi < preds.length && nmissed < 2; pi++) {
+            if (!preds[pi](i)) {
+                objMissed = this._filters[pi];
+                ++nmissed;
             }
         }
 
-        // Keep the object if it matched all filters
-        var keep = (failedFilter === null);
-        if (isInit) {
-            object._elt.style.display = keep ? '' : 'none';
-        } else {
-            if (keep)
-                $(object._elt).slideDown('fast');
-            else
-                $(object._elt).slideUp('fast');
-        }
-
-        // Update filter generators
-        if (failedFilter === null) {
-            // Use the object as a filter generator for all properties
-            // if it matched.
-            for (var name in selSets)
-                filterGenerators[name].push(object);
-            // And remember it so we can update disabled filters
-            matches.push(object);
-        } else if (failedFilter && !failedMultiple) {
-            // Use the object as a filter generator for the failing
-            // filter if it failed just one filter.
-            filterGenerators[failedFilter].push(object);
-        }
+        matched[i] = (nmissed === 0);
+        if (nmissed === 1)
+            missed[i] = objMissed;
     }
 
-    // Update viable filter values
-    for (var i = 0; i < this._filters.length; i++) {
-        var filter = this._filters[i];
-        if (filter.name in filterGenerators)
-            // We computed the set of objects that matched all of the
-            // other filters above
-            var objs = filterGenerators[filter.name];
-        else
-            // We weren't filtering on this, so the intersection of
-            // the other filters is the intersection of all of the
-            // filters
-            var objs = matches;
-
-        var visSet = this._valueSet(objs, filter.name);
-        for (var vi = 0; vi < filter.values.length; vi++) {
-            var value = filter.values[vi];
-            value.enabled = (value.value in visSet);
-            if (isInit) {
-                if (!value.enabled)
-                    value.divs.hide();
-            } else {
-                var opacity = value.enabled ? 1 : 0.33;
-                value.tds.fadeTo('', opacity);
-            }
-        }
-    }
+    // Update filter UIs
+    for (var i = 0; i < this._filters.length; i++)
+        this._filters[i].refresh(isInit, matched, missed);
 
     // Update saved state
     this._saveState();
+
+    // Call onchange
+    this._onchange(this._objects, matched);
 };
 
 /**
@@ -325,34 +179,30 @@ Quickfilter.prototype._saveState = function() {
         return;
 
     var state = {};
-    for (var fi = 0; fi < this._filters.length; fi++) {
-        var filter = this._filters[fi];
-        state[filter.name] = {};
-        for (var vi = 0; vi < filter.values.length; vi++)
-            state[filter.name][filter.values[vi].value] = filter.values[vi].selected;
-    }
+    for (var i = 0; i < this._filters.length; i++)
+        state[this._facets[i].name] = this._filters[i].getSaveState();
     this._stateBox.val(JSON.stringify(state));
 };
 
 /**
- * Create a Quickfilter property definition.
+ * Create a Quickfilter facet for a categorical (discrete) property.
  *
- * fetch is function that will be called with an element and should
- * return this property's value for that element (either a single
- * value or a list).  As a special case, fetch may instead be a
- * string, which will be used as the name of an XML attribute of the
- * element containing the value.
+ * proj is projection function that will be applied to each object in
+ * the Quickfilter's collection to retrieve this facet's value for
+ * that object (either a single string or a list of strings).  As a
+ * special case, proj may instead be a string, in which case the
+ * projection will retrieve the named XML attribute from each object.
  *
  * initial, if provided, is a list of initially selected values for
- * this property.
+ * this facet.
  */
-Quickfilter.Property = function (name, fetch, initial) {
+Quickfilter.Categorical = function (name, proj, initial) {
     this.name = name;
-    if (typeof(fetch) === "string")
-        this.fetch = function(elt) { return [elt.getAttribute(fetch)]; };
+    if (typeof(proj) === 'string')
+        this.proj = function(elt) { return [elt.getAttribute(proj)]; };
     else
-        this.fetch = function(elt) {
-            var val = fetch(elt);
+        this.proj = function(elt) {
+            var val = proj(elt);
             if (!jQuery.isArray(val))
                 val = [val];
             return val;
@@ -362,4 +212,184 @@ Quickfilter.Property = function (name, fetch, initial) {
         for (var i = 0; i < initial.length; i++)
             this.initial[initial[i]] = true;
     }
+};
+
+/**
+ * Create and return a filter UI for this facet.
+ *
+ * qf is the Quickfilter instance to get objects from and to add the
+ * UI to.  savedState is the saved state of this filter, or undefined
+ * if there is no saved state.
+ */
+Quickfilter.Categorical.prototype._createFilter = function(qf, savedState) {
+    return new Quickfilter._CategoricalUI(this, qf, savedState);
+};
+
+Quickfilter._CategoricalUI = function(facet, qf, savedState) {
+    var self = this;
+
+    // Gather object facet values
+    var objVals = new Array(qf._objects.length);
+    for (var i = 0; i < qf._objects.length; i++)
+        objVals[i] = facet.proj(qf._objects[i]);
+    this._objVals = objVals;
+
+    // Create filter UI
+    var filtersDiv = qf._filtersDiv;
+    var nameElt = $('<div>').addClass('quickfilter-name').text(facet.name).
+        appendTo(filtersDiv);
+
+    // Collect the value set of this filter
+    var valSet = {};
+    for (var i = 0; i < objVals.length; i++)
+        for (var j = 0; j < objVals[i].length; j++)
+            valSet[objVals[i][j]] = true;
+    var vals = [];
+    for (var val in valSet)
+        if (Object.prototype.hasOwnProperty.call(valSet, val))
+            vals.push(val);
+    vals.sort();
+
+    // Create rows
+    var values = [];
+    for (var i = 0; i < vals.length; i++) {
+        var rowElt = $('<div>').text(vals[i]).addClass('quickfilter-value').
+            appendTo(filtersDiv);
+        var checkElt = $('<span>&#x2713;</span>').
+            addClass('quickfilter-check').prependTo(rowElt);
+
+        // Get this value's selected state from the saved state or the
+        // initial selections
+        var selected = undefined;
+        try {
+            selected = savedState[vals[i]];
+        } catch (e) { }
+        if (typeof(selected) !== 'boolean')
+            selected = Object.prototype.hasOwnProperty.call(facet.initial, vals[i]);
+
+        // Create value
+        var value = {'value': vals[i],
+                     'selected': selected,
+                     'viable': true,
+                     'rowElt': rowElt,
+                     'checkElt': checkElt};
+        values.push(value);
+
+        // Handle clicks on this row
+        (function(value) {
+            rowElt.click(function() {
+                if (!value.viable)
+                    return;
+                // Toggle this value selection
+                value.selected = !value.selected;
+                qf._refresh();
+            });
+        })(value);
+    }
+    this._values = values;
+
+    // Show newly viable values and hide newly non-viable values on
+    // mouseleave from the filter UI.  This keeps the UI stable while
+    // the user is in it, but also cleans it up when possible.
+    filtersDiv.mouseleave(function() {
+        for (var j = 0; j < self._values.length; j++) {
+            var value = self._values[j];
+            if (value.viable)
+                value.rowElt.slideDown('fast');
+            else
+                value.rowElt.slideUp('fast');
+        }
+    });
+};
+
+/**
+ * Return true if the filter is pass-all (that is, in the UI, no
+ * values are selected).
+ */
+Quickfilter._CategoricalUI.prototype._isPassAll = function() {
+    for (var i = 0; i < this._values.length; i++)
+        if (this._values[i].selected)
+            return false;
+    return true;
 }
+
+/**
+ * Return a predicate function that takes an object index and returns
+ * whether the object matches the filter.
+ */
+Quickfilter._CategoricalUI.prototype.makePredicate = function() {
+    var self = this;
+
+    // If no values are selected, then this filter allows everything.
+    if (this._isPassAll())
+        return function() { return true; };
+
+    // Get selected filter values
+    var selValues = {};
+    for (var i = 0; i < this._values.length; i++)
+        if (this._values[i].selected)
+            selValues[this._values[i].value] = true;
+
+    // Create predicate
+    return function(obji) {
+        // Test if object i's values insect with selected values
+        var objVals = self._objVals[obji];
+        for (var i = 0; i < objVals.length; i++)
+            if (Object.prototype.hasOwnProperty.call(selValues, objVals[i]))
+                return true;
+        return false;
+    };
+};
+
+/**
+ * Refresh this filter UI.  isInit indicates whether this is the
+ * initial refresh (so animations should be suppressed).  matched is
+ * an array of booleans indicating which objects matched all filters.
+ * missed is an array indicating which single filter object failed to
+ * match each object (or a false value if zero or more than one failed
+ * to match).
+ */
+Quickfilter._CategoricalUI.prototype.refresh = function(isInit, matched, missed) {
+    // Update check marks.  If this filter is disabled, shade them in
+    // light gray, since it's like they're all selected.
+    var notSelOpacity = this._isPassAll() ? '0.25' : '0';
+    for (var i = 0; i < this._values.length; i++) {
+        var row = this._values[i];
+        row.checkElt.css('opacity', row.selected ? '1' : notSelOpacity);
+    }
+
+    // Compute viable value set
+    var viableVals = {};
+    for (var i = 0; i < matched.length; i++) {
+        if (matched[i] || missed[i] === this) {
+            // This object contributes viable values to this filter
+            for (var j = 0; j < this._objVals[i].length; j++)
+                viableVals[this._objVals[i][j]] = true;
+        }
+    }
+
+    // Refresh viable rows
+    for (var i = 0; i < this._values.length; i++) {
+        var value = this._values[i];
+        value.viable = Object.prototype.hasOwnProperty.call(viableVals, value.value);
+        if (isInit) {
+            if (!value.viable)
+                value.rowElt.hide();
+        } else {
+            if (value.viable)
+                value.rowElt.removeClass('quickfilter-value-nonviable');
+            else
+                value.rowElt.addClass('quickfilter-value-nonviable');
+        }
+    }
+};
+
+/**
+ * Return the state to save for this filter.
+ */
+Quickfilter._CategoricalUI.prototype.getSaveState = function() {
+    var state = {};
+    for (var i = 0; i < this._values.length; i++)
+        state[this._values[i].value] = this._values[i].selected;
+    return state;
+};
