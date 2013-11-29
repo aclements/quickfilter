@@ -89,12 +89,13 @@
  * Create a Quickfilter.  objects is an array-like collection of
  * objects to filter.  filtersDiv is a DOM object or jQuery object for
  * the container that the filter UI should be created in.  facets is
- * an array of Quickfilter.Categorical's to use as filtering facets.
- * Finally, onchange is a function that will be called when the filter
- * changes.  onchange will be passed two arguments: the objects array,
- * and an array of the same length of boolean values indicating
- * whether each object is matched by the current filters.  onchange is
- * also called once by the constructor to apply the initial filter.
+ * an array of Quickfilter.Categorical's or Quickfilter.FreeText's to
+ * use as filtering facets.  Finally, onchange is a function that will
+ * be called when the filter changes.  onchange will be passed two
+ * arguments: the objects array, and an array of the same length of
+ * boolean values indicating whether each object is matched by the
+ * current filters.  onchange is also called once by the constructor
+ * to apply the initial filter.
  *
  * Typically, objects will be a collection of DOM objects, and
  * onchange will modify their visibility, but nothing in Quickfilter
@@ -414,4 +415,112 @@ Quickfilter._CategoricalUI.prototype.getSaveState = function() {
     for (var i = 0; i < this._values.length; i++)
         state[this._values[i].value] = this._values[i].selected;
     return state;
+};
+
+/**
+ * Create a Quickfilter free text search.
+ *
+ * proj is a projection function that will be applied to each object
+ * in the Quickfilter's collection.  It must return a string that will
+ * be used for free text search.
+ *
+ * initial, if provided, is an initial search query to use.
+ */
+Quickfilter.FreeText = function(name, proj, initial) {
+    this.name = name;
+    this.proj = proj;
+    this.initial = initial;
+};
+
+Quickfilter.FreeText.prototype._createFilter = function(qf, savedState) {
+    return new Quickfilter._FreeTextUI(this, qf, savedState);
+};
+
+Quickfilter._FreeTextUI = function(facet, qf, savedState) {
+    this._facet = facet;
+    this._qf = qf;
+    this._index = null;
+
+    // The form-control class is used by Twitter Bootstrap
+    var inputDiv = $('<input type="search">').attr('placeholder', facet.name).
+        addClass('form-control').appendTo(qf._filtersDiv);
+    this._inputDiv = inputDiv;
+
+    // Handle saved/initial state
+    var initial = savedState || facet.initial;
+    if (initial)
+        this._inputDiv.val(initial);
+
+    // Update the filter as the user types
+    var timeout = null;
+    inputDiv.on('keyup', function(ev) {
+        if (timeout === null) {
+            timeout = setTimeout(
+                function() {
+                    timeout = null;
+                    qf._refresh();
+                }, 50);
+        }
+    });
+};
+
+/**
+ * Parse text into tokens.  Tokens are lower-cased.  If the text ends
+ * with a token not followed by any other text, 'prefix' in the
+ * returned object is set to that token.
+ */
+Quickfilter._FreeTextUI.prototype._parse = function(text) {
+    var re = /\w+/g;
+    var haveToks = {}, toks = [];
+    var m, prefix = null;
+    while ((m = re.exec(text)) !== null) {
+        var tok = m[0].toLocaleLowerCase();
+        if (!Object.prototype.hasOwnProperty.call(haveToks, tok)) {
+            toks.push(tok);
+            haveToks[tok] = true;
+        }
+        if (re.lastIndex === text.length)
+            prefix = tok;
+    }
+    return {toks: toks, prefix: prefix};
+};
+
+Quickfilter._FreeTextUI.prototype.makePredicate = function() {
+    var query = this._parse(this._inputDiv.val());
+
+    if (query.toks.length === 0)
+        return function() { return true; };
+
+    // If this is the first search, index the objects
+    if (this._index === null) {
+        this._index = new Array(this._qf._objects.length);
+        for (var i = 0; i < this._qf._objects.length; i++) {
+            var text = this._facet.proj(this._qf._objects[i]);
+            this._index[i] = this._parse(text).toks.join(' ') + ' ';
+        }
+    }
+
+    // Build the index strings to search for
+    var probes = new Array(query.toks.length);
+    for (var i = 0; i < query.toks.length; i++) {
+        if (query.prefix === query.toks[i])
+            probes[i] = query.toks[i];
+        else
+            probes[i] = query.toks[i] + ' ';
+    }
+
+    // Create predicate
+    var index = this._index;
+    return function(obji) {
+        for (var i = 0; i < probes.length; i++)
+            if (index[obji].indexOf(probes[i]) === -1)
+                return false;
+        return true;
+    }
+};
+
+Quickfilter._FreeTextUI.prototype.refresh = function() { };
+
+Quickfilter._FreeTextUI.prototype.getSaveState = function() {
+    return this._inputDiv.val();
 };
