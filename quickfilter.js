@@ -227,6 +227,7 @@ Quickfilter.Categorical.prototype._createFilter = function(qf, savedState) {
 
 Quickfilter._CategoricalUI = function(facet, qf, savedState) {
     var self = this;
+    this._qf = qf;
 
     // Gather object facet values
     var objVals = new Array(qf._objects.length);
@@ -292,14 +293,23 @@ Quickfilter._CategoricalUI = function(facet, qf, savedState) {
     // mouseleave from the filter UI.  This keeps the UI stable while
     // the user is in it, but also cleans it up when possible.
     filtersDiv.mouseleave(function() {
-        for (var j = 0; j < self._values.length; j++) {
-            var value = self._values[j];
-            if (value.viable)
-                value.rowElt.slideDown('fast');
-            else
-                value.rowElt.slideUp('fast');
-        }
+        self._tidyUI();
     });
+};
+
+/**
+ * "Tidy" this filter's UI by hiding non-viable values.  To keep the
+ * UI stable, this should only be called when the mouse is *not* over
+ * _qf._filtersDiv.
+ */
+Quickfilter._CategoricalUI.prototype._tidyUI = function() {
+    for (var j = 0; j < this._values.length; j++) {
+        var value = this._values[j];
+        if (value.viable)
+            value.rowElt.slideDown('fast');
+        else
+            value.rowElt.slideUp('fast');
+    }
 };
 
 /**
@@ -382,6 +392,11 @@ Quickfilter._CategoricalUI.prototype.refresh = function(isInit, matched, missed)
                 value.rowElt.addClass('quickfilter-value-nonviable');
         }
     }
+
+    // If the mouse isn't over the Quickfilter, tidy immediately
+    // rather than waiting for the mouse to leave
+    if (!this._qf._filtersDiv.is(':hover'))
+        this._tidyUI();
 };
 
 /**
