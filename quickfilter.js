@@ -239,6 +239,7 @@ Quickfilter._CategoricalUI = function(facet, qf, savedState) {
     var filtersDiv = qf._filtersDiv;
     var nameElt = $('<div>').addClass('quickfilter-name').text(facet.name).
         appendTo(filtersDiv);
+    this._nameElt = nameElt;
 
     // Collect the value set of this filter
     var valSet = {};
@@ -303,13 +304,19 @@ Quickfilter._CategoricalUI = function(facet, qf, savedState) {
  * _qf._filtersDiv.
  */
 Quickfilter._CategoricalUI.prototype._tidyUI = function() {
+    var anyViable = false;
     for (var j = 0; j < this._values.length; j++) {
         var value = this._values[j];
+        anyViable = anyViable || value.viable;
         if (value.viable)
             value.rowElt.slideDown('fast');
         else
             value.rowElt.slideUp('fast');
     }
+    if (anyViable)
+        this._nameElt.slideDown('fast');
+    else
+        this._nameElt.slideUp('fast');
 };
 
 /**
