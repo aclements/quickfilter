@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+
+# Generate a simple Unicode accent folding function that text search
+# can use to match accented, unaccented, and compatibility characters.
+
+import unicodedata
+import collections
+import json
+
+stripped_to_origs = collections.defaultdict(set)
+
+for ch in range(1, 0x10000):
+    orig = chr(ch)
+
+    # Strip combining characters
+    if unicodedata.combining(orig):
+        stripped_to_origs[''].add(orig)
+        continue
+
+    # The indexer first case-folds all letters, so only canonicalize
+    # lower-cased letters
+    if not orig.islower():
+        continue
+
+    # Decompose the letter.  We also do compatibility replacement (the
+    # 'K') to be thorough, though probably no one would notice if we
+    # didn't.
+    normalized = unicodedata.normalize('NFKD', orig)
+    # Strip off combining characters produced by decomposition
+    stripped = ''.join(c for c in normalized if not unicodedata.combining(c))
+
+    # If the string changed and we got a single ASCII character, add it
+    if orig != stripped and len(stripped) == 1 and \
+       ord(stripped) < 128 and stripped.isalpha():
+        stripped_to_origs[stripped.lower()].add(orig)
+
+#import pprint
+#pprint.pprint(stripped_to_origs)
+
+def delta(lst):
+    prev = 0
+    for v in lst:
+        yield v - prev
+        prev = v
+
+def rle(lst):
+    lst = list(lst)
+    i = 0
+    while i < len(lst):
+        j = i + 1
+        while j < len(lst) and lst[j] == lst[j-1]:
+            j += 1
+        if j - i > 2:
+            yield lst[i]
+            yield -(j - i)
+            i = j
+        else:
+            while i < j:
+                yield lst[i]
+                i += 1
+
+print('var accentFold = (function() {')
+# Compressed mapping table
+compressed = [[stripped] + list(rle(delta(sorted(map(ord, orig_chars)))))
+              for stripped, orig_chars in sorted(stripped_to_origs.items())]
+print('    var map = {};'.format(json.dumps(compressed, separators=(',', ':'))))
+# Decompress and construct folding function
+print('''\
+    // Create regexp and canonicalizer table
+    var restr = '';
+    var canon = {};
+    for (var i = 0; i < map.length; i++) {
+        var charCodes = [];
+        for (var j = 1; j < map[i].length;)
+            if (map[i][j] >= 0)
+                charCodes.push(map[i][j++])
+            else
+                charCodes.push((map[i][j]++, map[i][j-1]));
+        for (var j = 1; j < charCodes.length; j++)
+            charCodes[j] += charCodes[j-1];
+        for (var j = 0; j < charCodes.length; j++) {
+            var source = String.fromCharCode(charCodes[j]);
+            restr += source;
+            canon[source] = map[i][0];
+        }
+    }
+    var regexp = new RegExp('[' + restr + ']', 'g');
+    return function(string) {
+        return string.replace(regexp, function(c) { return canon[c]; });
+    };
+})();''')
