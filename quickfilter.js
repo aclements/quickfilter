@@ -237,9 +237,9 @@ Quickfilter._CategoricalUI = function(facet, qf, savedState) {
     this._objVals = objVals;
 
     // Create filter UI
-    var filtersDiv = qf._filtersDiv;
+    var uiDiv = $('<div>');
     var nameElt = $('<div>').addClass('quickfilter-name').text(facet.name).
-        appendTo(filtersDiv);
+        appendTo(uiDiv);
     this._nameElt = nameElt;
 
     // Collect the value set of this filter
@@ -257,7 +257,7 @@ Quickfilter._CategoricalUI = function(facet, qf, savedState) {
     var values = [];
     for (var i = 0; i < vals.length; i++) {
         var rowElt = $('<div>').text(vals[i]).addClass('quickfilter-value').
-            appendTo(filtersDiv);
+            attr('tabindex', '0').appendTo(uiDiv);
         var checkElt = $('<span>&#x2713;</span>').
             addClass('quickfilter-check').prependTo(rowElt);
 
@@ -290,11 +290,17 @@ Quickfilter._CategoricalUI = function(facet, qf, savedState) {
         })(value);
     }
     this._values = values;
+    uiDiv.on('keyup', function(ev) {
+        if (ev.which === 13)
+            $(ev.target).click();
+    });
+
+    qf._filtersDiv.append(uiDiv);
 
     // Show newly viable values and hide newly non-viable values on
     // mouseleave from the filter UI.  This keeps the UI stable while
     // the user is in it, but also cleans it up when possible.
-    filtersDiv.mouseleave(function() {
+    qf._filtersDiv.mouseleave(function() {
         self._tidyUI();
     });
 };
