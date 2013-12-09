@@ -133,10 +133,13 @@ Quickfilter.prototype._saveState = function() {
  * special case, proj may instead be a string, in which case the
  * projection will retrieve the named XML attribute from each object.
  *
- * initial, if provided, is a list of initially selected values for
- * this facet.
+ * options, if provided, must be an object giving optional arguments:
+ *
+ * - initial: a list of initially selected values for this facet.
  */
-Quickfilter.Categorical = function (name, proj, initial) {
+Quickfilter.Categorical = function (name, proj, options) {
+    options = options || {};
+
     this.name = name;
     if (typeof(proj) === 'string')
         this.proj = function(elt) { return [elt.getAttribute(proj)]; };
@@ -148,7 +151,7 @@ Quickfilter.Categorical = function (name, proj, initial) {
             return val;
         };
     this.initial = {};
-    if (initial !== undefined) {
+    if (options.initial !== undefined) {
         for (var i = 0; i < initial.length; i++)
             this.initial[initial[i]] = true;
     }
@@ -369,12 +372,15 @@ Quickfilter._CategoricalUI.prototype.getSaveState = function() {
  * in the Quickfilter's collection.  It must return a string that will
  * be used for free text search.
  *
- * initial, if provided, is an initial search query to use.
+ * options, if provided, must be an object giving optional arguments:
+ *
+ * - initial: an initial search query to use.
  */
-Quickfilter.FreeText = function(name, proj, initial) {
+Quickfilter.FreeText = function(name, proj, options) {
+    options = options || {};
     this.name = name;
     this.proj = proj;
-    this.initial = initial;
+    this.initial = options.initial;
 };
 
 Quickfilter.FreeText.prototype._createFilter = function(qf, savedState) {
