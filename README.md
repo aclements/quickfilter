@@ -94,3 +94,21 @@ filters contributes to the viable values for all facets; an object
 that match all but one filter contributes to the viable values of
 the facet that failed to match; an object that fails to match two
 or more filters doesn't contribute any viable values.
+
+
+Future directions
+-----------------
+
+* Continuous facets
+
+* Better handling of missing facet values
+
+* Custom sorts for facet values
+
+* Better handling of large facet domains
+
+* Better handling of large numbers of facets
+
+* Consider using object ID arrays instead of boolean array for result
+  sets (though the added complexity may outweigh the asymptotic
+  benefits).
