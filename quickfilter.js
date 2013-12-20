@@ -380,7 +380,7 @@ Quickfilter.FreeText = function(name, proj, options) {
     options = options || {};
     this.name = name;
     this.proj = proj;
-    this.initial = options.initial;
+    this.options = options;
 };
 
 Quickfilter.FreeText.prototype._createFilter = function(qf, savedState) {
@@ -394,11 +394,14 @@ Quickfilter._FreeTextUI = function(facet, qf, savedState) {
 
     // The form-control class is used by Twitter Bootstrap
     var inputDiv = $('<input type="search">').attr('placeholder', facet.name).
-        addClass('form-control').appendTo(qf._filtersDiv);
+        addClass('form-control');
+    if (facet.options.autofocus)
+        inputDiv.attr('autofocus', 'autofocus');
+    inputDiv.appendTo(qf._filtersDiv);
     this._inputDiv = inputDiv;
 
     // Handle saved/initial state
-    var initial = savedState || facet.initial;
+    var initial = savedState || facet.options.initial;
     if (initial)
         this._inputDiv.val(initial);
 
