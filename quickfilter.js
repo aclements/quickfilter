@@ -419,60 +419,52 @@ Quickfilter._FreeTextUI = function(facet, qf, savedState) {
 };
 
 /**
- * Parse text into tokens.  Tokens are lower-cased.  If the text ends
- * with a token not followed by any other text, 'prefix' in the
- * returned object is set to that token.
+ * Parse text into a list of tokens.  Tokens are lower-cased and
+ * accent-folded.
  */
 Quickfilter._FreeTextUI.prototype._parse = function(text) {
     var re = /\w+/g;
-    var haveToks = {}, toks = [];
-    var m, prefix = null;
+    var toks = [];
+    var m;
     // Case-fold and accent-fold the text
     text = Quickfilter._accentFold(text.toLocaleLowerCase());
-    while ((m = re.exec(text)) !== null) {
-        var tok = m[0];
-        if (!Object.prototype.hasOwnProperty.call(haveToks, tok)) {
-            toks.push(tok);
-            haveToks[tok] = true;
-        }
-        if (re.lastIndex === text.length)
-            prefix = tok;
+    while ((m = re.exec(text)) !== null)
+        toks.push(m[0]);
+    return toks
+};
+
+Quickfilter._FreeTextUI.prototype._parseQuery = function(query) {
+    var re = /("[^"]*("|$))|(\S+)/g;
+    var m = null;
+    var probes = [];
+    while ((m = re.exec(query)) !== null) {
+        var phrase = this._parse(m[1] || m[3]);
+        var key = ' ' + phrase.join(' ');
+        if (re.lastIndex !== query.length || m[1] === '"')
+            key += ' ';
+        var keyLit = JSON.stringify(key);
+        probes.push('index[obji].indexOf(' + keyLit + ') !== -1');
     }
-    return {toks: toks, prefix: prefix};
+    if (probes.length == 0)
+        return {predicate: function() { return true; }, trivial: true};
+    var code = ('var index=this._index;' +
+                'return ' + probes.join('&&') + ';');
+    return {predicate: $.proxy(new Function('obji', code), this)};
 };
 
 Quickfilter._FreeTextUI.prototype.makePredicate = function() {
-    var query = this._parse(this._inputDiv.val());
-
-    if (query.toks.length === 0)
-        return function() { return true; };
+    var query = this._parseQuery(this._inputDiv.val());
 
     // If this is the first search, index the objects
-    if (this._index === null) {
+    if (!query.trivial && this._index === null) {
         this._index = new Array(this._qf._objects.length);
         for (var i = 0; i < this._qf._objects.length; i++) {
             var text = this._facet.proj(this._qf._objects[i]);
-            this._index[i] = ' ' + this._parse(text).toks.join(' ') + ' ';
+            this._index[i] = ' ' + this._parse(text).join(' ') + ' ';
         }
     }
 
-    // Build the index strings to search for
-    var probes = new Array(query.toks.length);
-    for (var i = 0; i < query.toks.length; i++) {
-        if (query.prefix === query.toks[i])
-            probes[i] = ' ' + query.toks[i];
-        else
-            probes[i] = ' ' + query.toks[i] + ' ';
-    }
-
-    // Create predicate
-    var index = this._index;
-    return function(obji) {
-        for (var i = 0; i < probes.length; i++)
-            if (index[obji].indexOf(probes[i]) === -1)
-                return false;
-        return true;
-    }
+    return query.predicate;
 };
 
 Quickfilter._FreeTextUI.prototype.refresh = function() { };
