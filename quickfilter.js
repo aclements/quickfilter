@@ -369,8 +369,10 @@ Quickfilter._CategoricalUI.prototype.getSaveState = function() {
  * Create a Quickfilter free text search.
  *
  * proj is a projection function that will be applied to each object
- * in the Quickfilter's collection.  It must return a string that will
- * be used for free text search.
+ * in the Quickfilter's collection.  It must return either an object
+ * that maps from field names to free-text field values (where "" is
+ * used for unprefixed queries), or a string that will be used for
+ * unprefixed queries.
  *
  * options, if provided, must be an object giving optional arguments:
  *
@@ -434,16 +436,20 @@ Quickfilter._FreeTextUI.prototype._parse = function(text) {
 };
 
 Quickfilter._FreeTextUI.prototype._parseQuery = function(query) {
-    var re = /("[^"]*("|$))|(\S+)/g;
+    var re = /(\w+:)?(?:("[^"]*("|$))|(\S+))/g;
     var m = null;
     var probes = [];
     while ((m = re.exec(query)) !== null) {
-        var phrase = this._parse(m[1] || m[3]);
+        var field = m[1] ? m[1].slice(0, -1) : '';
+        var phrase = this._parse(m[2] || m[4]);
         var key = ' ' + phrase.join(' ');
-        if (re.lastIndex !== query.length || m[1] === '"')
+        if (re.lastIndex !== query.length || m[3] === '"')
             key += ' ';
+
+        var fieldLit = JSON.stringify(field);
         var keyLit = JSON.stringify(key);
-        probes.push('index[obji].indexOf(' + keyLit + ') !== -1');
+        probes.push(
+            '(index[obji][' + fieldLit + ']||"").indexOf(' + keyLit + ') !== -1');
     }
     if (probes.length == 0)
         return {predicate: function() { return true; }, trivial: true};
@@ -459,8 +465,15 @@ Quickfilter._FreeTextUI.prototype.makePredicate = function() {
     if (!query.trivial && this._index === null) {
         this._index = new Array(this._qf._objects.length);
         for (var i = 0; i < this._qf._objects.length; i++) {
-            var text = this._facet.proj(this._qf._objects[i]);
-            this._index[i] = ' ' + this._parse(text).join(' ') + ' ';
+            var proj = this._facet.proj(this._qf._objects[i]);
+            if (typeof(proj) === 'string')
+                proj = {'': proj};
+            this._index[i] = {};
+            for (var k in proj) {
+                if (!Object.prototype.hasOwnProperty.call(proj, k))
+                    continue;
+                this._index[i][k] = ' ' + this._parse(proj[k]).join(' ') + ' ';
+            }
         }
     }
 

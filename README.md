@@ -19,6 +19,8 @@ Features
 
 * Support for categorical and free text facets.
 
+* Free text queries support quoted phrases and fields.
+
 * Accent folding for free text search makes it easy to search
   non-English text and names.
 
