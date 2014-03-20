@@ -452,7 +452,7 @@ Quickfilter._FreeTextUI.prototype.makePredicate = function() {
         this._index = new Array(this._qf._objects.length);
         for (var i = 0; i < this._qf._objects.length; i++) {
             var text = this._facet.proj(this._qf._objects[i]);
-            this._index[i] = this._parse(text).toks.join(' ') + ' ';
+            this._index[i] = ' ' + this._parse(text).toks.join(' ') + ' ';
         }
     }
 
@@ -460,9 +460,9 @@ Quickfilter._FreeTextUI.prototype.makePredicate = function() {
     var probes = new Array(query.toks.length);
     for (var i = 0; i < query.toks.length; i++) {
         if (query.prefix === query.toks[i])
-            probes[i] = query.toks[i];
+            probes[i] = ' ' + query.toks[i];
         else
-            probes[i] = query.toks[i] + ' ';
+            probes[i] = ' ' + query.toks[i] + ' ';
     }
 
     // Create predicate
